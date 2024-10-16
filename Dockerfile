@@ -1,6 +1,5 @@
 # Build Environment: Node + Playwright
-FROM node:16
-FROM mcr.microsoft.com/playwright:focal
+FROM mcr.microsoft.com/playwright:v1.48.1-focal
 
 RUN apt-get update
 
