@@ -55,14 +55,50 @@ async function getPage(url){
     const page = await context.newPage();
     await page.goto(url, { waitUntil: 'domcontentloaded' });
 
-    // Extraer el H1
-    const h1 = await page.$eval('h1', el => el.textContent.trim());
-            
-    // Extraer el contenido de la meta description
-    const metaDescription = await page.$eval('meta[name="description"]', el => el.getAttribute('content'));
+    // Extraer el título, probando diferentes tipos
+    const title = await page.evaluate(() => {
+        const selectors = [
+            'h1',                           // H1 en la página
+            'meta[property="og:title"]',   // Open Graph Title
+            'title'                        // Título de la página
+        ];
+
+        for (const selector of selectors) {
+            const element = document.querySelector(selector);
+            if (element) {
+                // Si es un h1 o un title, devolvemos el textContent; si es un meta, devolvemos el atributo content
+                return selector === 'h1' || selector === 'title'
+                    ? element.textContent.trim()
+                    : element.getAttribute('content');
+            }
+        }
+
+        // Si no se encuentra ningún título, devuelve null
+        return null;
+    });
+
+    // Extraer el contenido de la meta description, probando diferentes tipos
+    const metaDescription = await page.evaluate(() => {
+        const selectors = [
+            'meta[name="description"]',
+            'meta[property="og:description"]',
+            'meta[name="twitter:description"]'
+        ];
+
+        for (const selector of selectors) {
+            const element = document.querySelector(selector);
+            if (element) {
+                return element.getAttribute('content');
+            }
+        }
+
+        // Si no se encuentra ninguna, devuelve null
+        return "";
+    });
+
     
     // Agregar los datos al array
-    const data = { 'page': url, 'title': h1, 'description': metaDescription };
+    const data = { 'page': url, 'title': title, 'description': metaDescription };
     await browser.close();
     return data
 
