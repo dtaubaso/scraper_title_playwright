@@ -29,7 +29,16 @@ async function getPage(url){
 
     const iPhone = devices['iPhone 12'];
       // Configurar el navegador y el contexto con emulación
-      const browser = await chromium.launch({ headless: true }); // Cambia a true si quieres usar modo headless
+      const browser = await chromium.launch({ headless: true,
+        args:["--disable-blink-features=AutomationControlled",
+            "--disable-dev-shm-usage",
+             "--no-sandbox",
+             "--enable-javascript",
+             "--disable-gpu",
+             "--disable-extensions",
+             "--headless=new"
+             ]
+       }); // Cambia a true si quieres usar modo headless
       const context = await browser.newContext({
           ...iPhone,
           javaScriptEnabled: true // JavaScript está habilitado por defecto, pero lo especificamos
