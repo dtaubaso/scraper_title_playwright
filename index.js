@@ -64,6 +64,8 @@ async function getPage(url){
     const page = await context.newPage();
     await page.goto(url, { waitUntil: 'domcontentloaded' });
 
+    console.log(page.content());
+
     // Extraer el título, probando diferentes tipos
     const title = await page.evaluate(() => {
         const selectors = [
