@@ -3,49 +3,44 @@ const { chromium, devices } = require('playwright');
 
 const PORT = 8080;
 const HOST = '0.0.0.0';
-//const HOST = 'localhost';
+// const HOST = 'localhost';
 
 const app = express();
-app.use(express.json()) 
+app.use(express.json());
 
 app.post('/', async function (req, res) {
-
-    var url = req.body.url;
-    console.log(url)
-    try{ 
-        var data = await getPage(url);
-
+    const url = req.body.url;
+    console.log(`Requested URL: ${url}`);
+    try {
+        const data = await getPage(url);
+        res.json(data);
+    } catch (err) {
+        console.error(`Error processing URL: ${url}`, err);
+        res.status(500).json({ error: "Failed to process the URL", details: err.message });
     }
-       catch(err){
-        data = "Error";
-        console.log(err);
-       } 
-
-       res.json(data);
-
 });
 
-async function getPage(url){
-
+async function getPage(url) {
     const iPhone = devices['iPhone 12'];
-      // Configurar el navegador y el contexto con emulación
-      const browser = await chromium.launch({ headless: true,
-        args:["--disable-blink-features=AutomationControlled",
+    const browser = await chromium.launch({
+        headless: true,
+        args: [
+            "--disable-blink-features=AutomationControlled",
             "--disable-dev-shm-usage",
-             "--no-sandbox",
-             "--enable-javascript",
-             "--disable-gpu",
-             "--disable-extensions",
-             "--headless=new"
-             ]
-       }); // Cambia a true si quieres usar modo headless
-      const context = await browser.newContext({
-          ...iPhone,
-          javaScriptEnabled: true // JavaScript está habilitado por defecto, pero lo especificamos
-      });
-  
-  
-      // Añadir scripts para evitar detección de automatización
+            "--no-sandbox",
+            "--enable-javascript",
+            "--disable-gpu",
+            "--disable-extensions",
+            "--headless=new"
+        ]
+    });
+
+    const context = await browser.newContext({
+        ...iPhone,
+        javaScriptEnabled: true
+    });
+
+    // Añadir scripts para evitar detección de automatización
     await context.addInitScript(() => {
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         Object.defineProperty(navigator, 'platform', { get: () => 'iPhone' });
@@ -53,7 +48,7 @@ async function getPage(url){
         Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
     });
 
-
+    const page = await context.newPage();
 
     // Capturar logs y errores de la página
     page.on('console', msg => console.log(`PAGE LOG: ${msg.text()}`));
@@ -61,61 +56,45 @@ async function getPage(url){
         console.error(`Request failed: ${request.url()} - ${request.failure().errorText}`);
     });
 
-
-    const page = await context.newPage();
+    // Navegar a la URL
     await page.goto(url, { waitUntil: 'domcontentloaded' });
 
-    console.log(await page.content());
-
-    // Extraer el título, probando diferentes tipos
+    // Extraer título
     const title = await page.evaluate(() => {
-        const selectors = [
-            'h1',                           // H1 en la página
-            'meta[property="og:title"]',   // Open Graph Title
-            'title'                        // Título de la página
-        ];
-
+        const selectors = ['h1', 'meta[property="og:title"]', 'title'];
         for (const selector of selectors) {
             const element = document.querySelector(selector);
             if (element) {
-                // Si es un h1 o un title, devolvemos el textContent; si es un meta, devolvemos el atributo content
                 return selector === 'h1' || selector === 'title'
                     ? element.textContent.trim()
                     : element.getAttribute('content');
             }
         }
-
-        // Si no se encuentra ningún título, devuelve null
         return null;
     });
 
-    // Extraer el contenido de la meta description, probando diferentes tipos
+    // Extraer meta descripción
     const metaDescription = await page.evaluate(() => {
         const selectors = [
             'meta[name="description"]',
             'meta[property="og:description"]',
             'meta[name="twitter:description"]'
         ];
-
         for (const selector of selectors) {
             const element = document.querySelector(selector);
             if (element) {
                 return element.getAttribute('content');
             }
         }
-
-        // Si no se encuentra ninguna, devuelve null
-        return "";
+        return null;
     });
 
-    
-    // Agregar los datos al array
-    const data = { 'page': url, 'title': title, 'description': metaDescription };
+    // Preparar datos
+    const data = { page: url, title, description: metaDescription };
     await browser.close();
-    return data
-
+    return data;
 }
 
 app.listen(PORT, HOST, () => {
     console.log(`Running on http://${HOST}:${PORT}`);
-  });
+});
