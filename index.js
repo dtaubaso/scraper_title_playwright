@@ -44,22 +44,23 @@ async function getPage(url){
           javaScriptEnabled: true // JavaScript está habilitado por defecto, pero lo especificamos
       });
   
-      // Deshabilitar la detección de headless
-      await context.addInitScript(() => {
-          Object.defineProperty(navigator, 'webdriver', {
-              get: () => undefined
-          });
-      });
   
-      // Otras propiedades del navegador para evitar detección
-      await context.addInitScript(() => {
-          Object.defineProperty(navigator, 'platform', {
-              get: () => 'iPhone'
-          });
-          Object.defineProperty(navigator, 'languages', {
-              get: () => ['en-US', 'en']
-          });
-      });
+      // Añadir scripts para evitar detección de automatización
+    await context.addInitScript(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'platform', { get: () => 'iPhone' });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
+    });
+
+
+
+    // Capturar logs y errores de la página
+    page.on('console', msg => console.log(`PAGE LOG: ${msg.text()}`));
+    page.on('requestfailed', request => {
+        console.error(`Request failed: ${request.url()} - ${request.failure().errorText}`);
+    });
+
 
     const page = await context.newPage();
     await page.goto(url, { waitUntil: 'domcontentloaded' });
