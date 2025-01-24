@@ -23,16 +23,7 @@ app.post('/', async function (req, res) {
 async function getPage(url) {
     const iPhone = devices['Pixel 7'];
     const browser = await chromium.launch({
-        headless: true,
-        args: [
-            "--disable-blink-features=AutomationControlled",
-            "--disable-dev-shm-usage",
-            "--no-sandbox",
-            "--enable-javascript",
-            "--disable-gpu",
-            "--disable-extensions",
-            "--headless=new"
-        ]
+        headless: true
     });
 
     const context = await browser.newContext({
@@ -43,7 +34,6 @@ async function getPage(url) {
     // Añadir scripts para evitar detección de automatización
     await context.addInitScript(() => {
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        Object.defineProperty(navigator, 'platform', { get: () => 'iPhone' });
         Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
         Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
     });
