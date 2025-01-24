@@ -21,7 +21,7 @@ app.post('/', async function (req, res) {
 });
 
 async function getPage(url) {
-    const iPhone = devices['iPhone 12'];
+    const iPhone = devices['Pixel 7'];
     const browser = await chromium.launch({
         headless: true,
         args: [
