@@ -4,7 +4,8 @@ const stealth = require('puppeteer-extra-plugin-stealth')()
 chromium.use(stealth);
 
 const PORT = 8080;
-const HOST = '0.0.0.0';
+//const HOST = '0.0.0.0';
+const HOST = 'localhost';
 const app = express();
 app.use(express.json());
 
@@ -36,37 +37,83 @@ app.post('/title', async (req, res) => {
     }
 });
 
-async function getPageSource(url) {
-    const device = devices['Pixel 7'];
-    const browser = await chromium.launch({ headless: true }); // Se mantiene headless
+const desktopUserAgents = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:126.0) Gecko/20100101 Firefox/126.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/125.0.0.0 Safari/537.36'
+];
+
+// Función para obtener un User-Agent aleatorio de la lista
+function getRandomDesktopUserAgent() {
+    const randomIndex = Math.floor(Math.random() * desktopUserAgents.length);
+    return desktopUserAgents[randomIndex];
+}
+
+async function getPageSource(url) { // Renombramos la función para mayor claridad o mantenemos el nombre
+    const userAgent = getRandomDesktopUserAgent();
+    console.log(`getPageSource (extract from viewer method): Using UA "${userAgent}" for URL: ${url}`);
+
+    const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
-        ...device,
+        userAgent: userAgent,
         javaScriptEnabled: true,
-        userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.6723.31 Mobile Safari/537.36'
+        viewport: { width: 1920, height: 1080 },
+        deviceScaleFactor: 1,
+        isMobile: false,
+        hasTouch: false,
     });
 
-    // Añadir scripts para evitar detección
-    await context.addInitScript(() => {
+    await context.addInitScript((uaString) => {
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
-    });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en', 'es-ES', 'es'] });
+        let platformValue = 'Linux x86_64';
+        if (uaString.includes('Win')) platformValue = 'Win32';
+        else if (uaString.includes('Mac')) platformValue = 'MacIntel';
+        Object.defineProperty(navigator, 'platform', { get: () => platformValue });
+        Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+    }, userAgent);
 
     const page = await context.newPage();
 
-    // Interceptar y abortar solicitudes que dan problemas, por ejemplo, de captcha.
     await page.route('**/captcha-delivery.com/**', route => route.abort());
-
     page.on('console', msg => console.log(`PAGE LOG: ${msg.text()}`));
     page.on('requestfailed', request => {
         console.error(`Request failed: ${request.url()} - ${request.failure().errorText}`);
     });
 
-    await page.goto(url, { waitUntil: 'domcontentloaded' });
-    const content = await page.content();
-    await browser.close();
-    return content;
+    try {
+        console.log(`getPageSource (extract from viewer method): Navigating to ${url}`);
+        // Usamos 'networkidle' para dar tiempo a que todo cargue, incluyendo scripts de Cloudflare
+        await page.goto(url, { waitUntil: 'load', timeout: 9000 }); // Aumentamos el timeout
+        console.log(`getPageSource (extract from viewer method): Navigation to ${page.url()} complete.`);
+
+        // Intenta localizar el div del visor XML de WebKit/Chromium
+        const xmlViewerDiv = page.locator('#webkit-xml-viewer-source-xml');
+        const viewerDetected = await xmlViewerDiv.count() > 0;
+
+        let finalContent;
+
+        if (viewerDetected) {
+            console.log('getPageSource (extract from viewer method): XML viewer detected. Extracting content...');
+            finalContent = await xmlViewerDiv.innerHTML();
+        } else {
+            console.log('getPageSource (extract from viewer method): XML viewer not detected. Returning full page content (might be Cloudflare challenge or other HTML).');
+            finalContent = await page.content();
+        }
+
+        await browser.close();
+        return finalContent;
+    } catch (error) {
+        console.error(`getPageSource (extract from viewer method): Error for URL ${url}:`, error);
+        await browser.close();
+        throw error;
+    }
 }
+
+
 
 function extractTitleCheerio(html) {
     const cheerio = require('cheerio');
