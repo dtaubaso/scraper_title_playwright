@@ -87,7 +87,7 @@ async function getPageSource(url) { // Renombramos la función para mayor clarid
     try {
         console.log(`getPageSource (extract from viewer method): Navigating to ${url}`);
         // Usamos 'networkidle' para dar tiempo a que todo cargue, incluyendo scripts de Cloudflare
-        await page.goto(url, { waitUntil: 'load', timeout: 9000 }); // Aumentamos el timeout
+        await page.goto(url, { waitUntil: 'networkidle', timeout: 9000 }); // Aumentamos el timeout
         console.log(`getPageSource (extract from viewer method): Navigation to ${page.url()} complete.`);
 
         // Intenta localizar el div del visor XML de WebKit/Chromium
