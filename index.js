@@ -4,8 +4,8 @@ const stealth = require('puppeteer-extra-plugin-stealth')()
 chromium.use(stealth);
 
 const PORT = 8080;
-//const HOST = '0.0.0.0';
-const HOST = 'localhost';
+const HOST = '0.0.0.0';
+//const HOST = 'localhost';
 const app = express();
 app.use(express.json());
 
