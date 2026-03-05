@@ -181,19 +181,31 @@ async function getXmlSource(url) {
     const page = await context.newPage();
 
     try {
-        // Navegar al URL — con headless:false CF no detecta el browser como bot
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        // Navegar al URL — con headless:false CF no detecta el browser como bot.
+        // Usamos networkidle para dar tiempo a que el JS del challenge de CF se ejecute
+        // y haga la redirección final antes de que revisemos el título.
+        await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
 
-        // Esperar a que el challenge resuelva: CF redirige al URL original
-        // Usamos waitForURL con regex para ignorar query params que CF pueda agregar
-        const urlPattern = new RegExp(url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-        await page.waitForURL(urlPattern, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+        // Si CF todavía no resolvió (puede pasar en despliegues lentos), esperar
+        let title = await page.title();
+        if (title.includes('Just a moment') || title.includes('Checking your browser')) {
+            console.log(`getXmlSource: CF challenge still active after networkidle, waiting up to 30s more...`);
+            // Poll cada 3s hasta que el título cambie
+            for (let i = 0; i < 10; i++) {
+                await page.waitForTimeout(3000);
+                title = await page.title();
+                if (!title.includes('Just a moment') && !title.includes('Checking your browser')) break;
+                console.log(`getXmlSource: still on CF challenge (${(i + 1) * 3}s)`);
+            }
+        }
 
         // Verificar que no seguimos en la challenge page
-        const title = await page.title();
+        title = await page.title();
         if (title.includes('Just a moment') || title.includes('Checking your browser')) {
             throw new Error(`Cloudflare challenge did not resolve (title: "${title}")`);
         }
+
+        console.log(`getXmlSource: page loaded, title="${title}"`);
 
         // Fetch interno: ya tenemos cf_clearance en el contexto
         const xmlContent = await page.evaluate(async (fetchUrl) => {
