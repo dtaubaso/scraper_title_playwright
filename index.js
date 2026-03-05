@@ -140,9 +140,27 @@ async function getPageSource(url) { // Renombramos la función para mayor clarid
 }
 
 
+async function waitForCfClear(page, label) {
+    // Poll until the title is no longer a CF challenge page (max ~45s)
+    for (let i = 0; i < 15; i++) {
+        const title = await page.title();
+        if (!title.includes('Just a moment') && !title.includes('Checking your browser')) {
+            console.log(`${label}: CF resolved after ${i * 3}s, title="${title}"`);
+            return;
+        }
+        console.log(`${label}: still on CF challenge (${i * 3}s), title="${title}"`);
+        await page.waitForTimeout(3000);
+    }
+    throw new Error(`${label}: Cloudflare challenge did not resolve within 45s`);
+}
+
 async function getXmlSource(url) {
     const userAgent = getRandomDesktopUserAgent();
     console.log(`getXmlSource: Using UA "${userAgent}" for URL: ${url}`);
+
+    // Extraer la homepage para hacer el warm-up de CF ahí primero
+    const parsedUrl = new URL(url);
+    const homeUrl = parsedUrl.origin + '/';
 
     const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
@@ -169,23 +187,24 @@ async function getXmlSource(url) {
     const page = await context.newPage();
 
     try {
-        // 1. Navegar — solo esperar DOMContentLoaded para no agotar el timeout en la challenge page
+        // 1. Warm-up en la homepage: CF resuelve el challenge aquí y setea cf_clearance
+        //    para todo el dominio. Navegar directo al XML siempre dispara managed challenge.
+        console.log(`getXmlSource: warming up on homepage ${homeUrl}`);
+        await page.goto(homeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await waitForCfClear(page, 'getXmlSource[homepage]');
+
+        // Espera extra para que la red (incluyendo recursos JS de CF) se estabilice
+        await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
+        console.log(`getXmlSource: homepage loaded, cf_clearance cookie should be set`);
+
+        // 2. Navegar al XML dentro del mismo contexto (cookies ya incluyen cf_clearance)
+        console.log(`getXmlSource: navigating to XML URL ${url}`);
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await waitForCfClear(page, 'getXmlSource[xml]');
 
-        // 2. Si Cloudflare presentó un reto, el JS del reto termina haciendo un redirect
-        //    al URL original → esperamos esa navegación en lugar de hacer polling del título
-        const title = await page.title();
-        if (title.includes('Just a moment') || title.includes('Checking your browser')) {
-            console.log('getXmlSource: Cloudflare challenge detected, waiting for redirect...');
-            await page.waitForURL(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-            // Dar un momento extra para que la red se estabilice tras la redirección
-            await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-            console.log(`getXmlSource: Cloudflare challenge resolved, now at: ${page.url()}`);
-        }
-
-        // 3. Fetch interno: el navegador ya tiene las cookies de CF, trae el XML puro
+        // 3. Fetch interno para obtener el XML crudo (sin render del visor de Chrome)
         const xmlPuro = await page.evaluate(async (fetchUrl) => {
-            const response = await fetch(fetchUrl);
+            const response = await fetch(fetchUrl, { credentials: 'include' });
             return await response.text();
         }, url);
 
