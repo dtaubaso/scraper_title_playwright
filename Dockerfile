@@ -1,7 +1,7 @@
 # Build Environment: Node + Playwright
 FROM mcr.microsoft.com/playwright:v1.48.1-focal
 
-RUN apt-get update
+RUN apt-get update && apt-get install -y xvfb && rm -rf /var/lib/apt/lists/*
 
 # Env
 WORKDIR /app
@@ -18,4 +18,5 @@ RUN npm install
 COPY . .
 
 EXPOSE 8080
-CMD [ "node", "index.js" ]
+# Xvfb arranca un display virtual :99 para que Playwright corra headless:false sin monitor real
+CMD ["sh", "-c", "Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp & sleep 1 && DISPLAY=:99 node index.js"]

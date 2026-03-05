@@ -143,15 +143,72 @@ async function getPageSource(url) {
 
 
 async function getXmlSource(url) {
-    console.log(`getXmlSource: fetching ${url}`);
-    // impit es un ESM-only package, usamos dynamic import desde CJS
-    const { Impit } = await import('impit');
-    const client = new Impit({ browser: 'chrome' });
-    const response = await client.fetch(url);
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status} ${response.statusText} for ${url}`);
+    const { ua: userAgent } = getRandomDesktopUserAgent();
+    console.log(`getXmlSource: Using UA "${userAgent}" for URL: ${url}`);
+
+    const browser = await chromium.launch({
+        // headless:false + Xvfb = browser real para CF, sin monitor físico
+        headless: false,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--window-size=1920,1080',
+            '--lang=en-US,en',
+        ],
+    });
+
+    const context = await browser.newContext({
+        userAgent,
+        javaScriptEnabled: true,
+        viewport: { width: 1920, height: 1080 },
+        locale: 'en-US',
+        timezoneId: 'America/New_York',
+    });
+
+    await context.addInitScript((uaString) => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+        let platformValue = 'Win32';
+        if (uaString.includes('Mac')) platformValue = 'MacIntel';
+        Object.defineProperty(navigator, 'platform', { get: () => platformValue });
+        Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+        window.chrome = { runtime: {} };
+    }, userAgent);
+
+    const page = await context.newPage();
+
+    try {
+        // Navegar al URL — con headless:false CF no detecta el browser como bot
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+        // Esperar a que el challenge resuelva: CF redirige al URL original
+        // Usamos waitForURL con regex para ignorar query params que CF pueda agregar
+        const urlPattern = new RegExp(url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        await page.waitForURL(urlPattern, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+
+        // Verificar que no seguimos en la challenge page
+        const title = await page.title();
+        if (title.includes('Just a moment') || title.includes('Checking your browser')) {
+            throw new Error(`Cloudflare challenge did not resolve (title: "${title}")`);
+        }
+
+        // Fetch interno: ya tenemos cf_clearance en el contexto
+        const xmlContent = await page.evaluate(async (fetchUrl) => {
+            const response = await fetch(fetchUrl, { credentials: 'include' });
+            return await response.text();
+        }, url);
+
+        await browser.close();
+        return xmlContent;
+
+    } catch (error) {
+        console.error(`getXmlSource: Error for URL ${url}:`, error);
+        await browser.close();
+        throw error;
     }
-    return await response.text();
 }
 
 
