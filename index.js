@@ -23,6 +23,32 @@ app.post('/page-source', async (req, res) => {
     }
 });
 
+
+app.post('/xml-source', async (req, res) => {
+    const url = req.body.url;
+    if (!url) return res.status(400).send("URL is required");
+
+    console.log(`Requested URL for XML source: ${url}`);
+    
+    try {
+        const rawContent = await getXmlSource(url);
+        
+        // Usar text/xml es más limpio para archivos de sitemap
+        res.set('Content-Type', 'text/xml; charset=utf-8');
+        
+        // No es estrictamente necesario pasarlo a Buffer si ya es un string,
+        // pero dejarlo así no rompe nada.
+        res.send(rawContent); 
+
+    } catch (err) {
+        console.error(`Error processing URL: ${url}`, err);
+        // Si el error es un timeout de Playwright, podrías devolver un 504
+        const statusCode = err.message.includes('timeout') ? 504 : 500;
+        res.status(statusCode).send(`Failed to process the URL: ${err.message}`);
+    }
+});
+
+
 // Ejemplo del endpoint para extraer título con Cheerio (sin cambios)
 app.post('/title', async (req, res) => {
     const url = req.body.url;
@@ -108,6 +134,59 @@ async function getPageSource(url) { // Renombramos la función para mayor clarid
         return finalContent;
     } catch (error) {
         console.error(`getPageSource (extract from viewer method): Error for URL ${url}:`, error);
+        await browser.close();
+        throw error;
+    }
+}
+
+
+async function getXmlSource(url) {
+    const userAgent = getRandomDesktopUserAgent();
+    console.log(`getXmlSource: Usando UA "${userAgent}" para XML: ${url}`);
+
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({
+        userAgent: userAgent,
+        // Es vital que el navegador acepte XML explícitamente
+        extraHTTPHeaders: {
+            'Accept': 'application/xml, text/xml, */*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+        }
+    });
+
+    const page = await context.newPage();
+
+    try {
+        console.log(`getXmlSource: Navegando a ${url}`);
+        
+        // 1. Escuchamos el evento 'response' para capturar el cuerpo real
+        const response = await page.goto(url, { 
+            waitUntil: 'commit', // 'commit' es suficiente para recibir los headers y el body inicial
+            timeout: 15000 
+        });
+
+        if (!response) {
+            throw new Error("No se recibió respuesta del servidor.");
+        }
+
+        const status = response.status();
+        console.log(`getXmlSource: Status HTTP ${status}`);
+
+        if (status >= 400) {
+            // Si hay un error (403 Cloudflare, 404, etc.), extraemos el body para debug
+            const errorBody = await response.text();
+            throw new Error(`Error del servidor (${status}): ${errorBody.substring(0, 100)}...`);
+        }
+
+        // 2. Extraemos el texto crudo del body de la respuesta
+        // Esto ignora cualquier visor de XML de Chrome y te da el código fuente real
+        const finalContent = await response.text();
+
+        await browser.close();
+        return finalContent;
+
+    } catch (error) {
+        console.error(`getXmlSource: Error crítico para URL ${url}:`, error);
         await browser.close();
         throw error;
     }
