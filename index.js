@@ -169,20 +169,18 @@ async function getXmlSource(url) {
     const page = await context.newPage();
 
     try {
-        // 1. Navegar y esperar que la red se estabilice
-        await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
+        // 1. Navegar — solo esperar DOMContentLoaded para no agotar el timeout en la challenge page
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-        // 2. Si Cloudflare presentó un reto, esperar a que lo resuelva JS
+        // 2. Si Cloudflare presentó un reto, el JS del reto termina haciendo un redirect
+        //    al URL original → esperamos esa navegación en lugar de hacer polling del título
         const title = await page.title();
         if (title.includes('Just a moment') || title.includes('Checking your browser')) {
-            console.log('getXmlSource: Cloudflare challenge detected, waiting for resolution...');
-            await page.waitForFunction(
-                () => !document.title.includes('Just a moment') && !document.title.includes('Checking your browser'),
-                { timeout: 30000 }
-            );
-            // Esperar que la red vuelva a estabilizarse tras el reto
+            console.log('getXmlSource: Cloudflare challenge detected, waiting for redirect...');
+            await page.waitForURL(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            // Dar un momento extra para que la red se estabilice tras la redirección
             await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-            console.log('getXmlSource: Cloudflare challenge resolved.');
+            console.log(`getXmlSource: Cloudflare challenge resolved, now at: ${page.url()}`);
         }
 
         // 3. Fetch interno: el navegador ya tiene las cookies de CF, trae el XML puro
