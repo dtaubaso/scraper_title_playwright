@@ -142,51 +142,33 @@ async function getPageSource(url) { // Renombramos la función para mayor clarid
 
 async function getXmlSource(url) {
     const userAgent = getRandomDesktopUserAgent();
-    console.log(`getXmlSource: Usando UA "${userAgent}" para XML: ${url}`);
-
     const browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({
-        userAgent: userAgent,
-        // Es vital que el navegador acepte XML explícitamente
-        extraHTTPHeaders: {
-            'Accept': 'application/xml, text/xml, */*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-        }
-    });
-
+    const context = await browser.newContext({ userAgent });
     const page = await context.newPage();
 
     try {
-        console.log(`getXmlSource: Navegando a ${url}`);
-        
-        // 1. Escuchamos el evento 'response' para capturar el cuerpo real
-        const response = await page.goto(url, { 
-            waitUntil: 'commit', // 'commit' es suficiente para recibir los headers y el body inicial
-            timeout: 15000 
-        });
+        // 1. Navegamos para que Cloudflare nos dé la cookie de acceso
+        await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
 
-        if (!response) {
-            throw new Error("No se recibió respuesta del servidor.");
+        // 2. Verificamos si seguimos en la página de "Just a moment"
+        const content = await page.content();
+        if (content.includes("Just a moment") || content.includes("cloudflare")) {
+            // Esperamos un poco más para que el reto se resuelva solo
+            await page.waitForTimeout(5000);
         }
 
-        const status = response.status();
-        console.log(`getXmlSource: Status HTTP ${status}`);
-
-        if (status >= 400) {
-            // Si hay un error (403 Cloudflare, 404, etc.), extraemos el body para debug
-            const errorBody = await response.text();
-            throw new Error(`Error del servidor (${status}): ${errorBody.substring(0, 100)}...`);
-        }
-
-        // 2. Extraemos el texto crudo del body de la respuesta
-        // Esto ignora cualquier visor de XML de Chrome y te da el código fuente real
-        const finalContent = await response.text();
+        // 3. LA CLAVE: Hacemos un fetch desde el contexto del navegador.
+        // Como el navegador ya pasó el reto, el fetch interno enviará 
+        // automáticamente las cookies de Cloudflare y traerá el XML PURO.
+        const xmlPuro = await page.evaluate(async (fetchUrl) => {
+            const response = await fetch(fetchUrl);
+            return await response.text(); // Esto es el XML tal cual, sin render de Chrome
+        }, url);
 
         await browser.close();
-        return finalContent;
+        return xmlPuro;
 
     } catch (error) {
-        console.error(`getXmlSource: Error crítico para URL ${url}:`, error);
         await browser.close();
         throw error;
     }
