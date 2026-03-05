@@ -63,22 +63,22 @@ app.post('/title', async (req, res) => {
     }
 });
 
+// Solo UAs basados en Chromium — el motor de Playwright ES Chromium,
+// mandar un UA de Firefox sería inconsistente con las señales internas del browser.
 const desktopUserAgents = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:126.0) Gecko/20100101 Firefox/126.0',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/125.0.0.0 Safari/537.36'
+    { ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',       brand: '"Google Chrome";v="125", "Chromium";v="125", "Not-A.Brand";v="24"', platform: 'Windows' },
+    { ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36', brand: '"Google Chrome";v="125", "Chromium";v="125", "Not-A.Brand";v="24"', platform: 'macOS'   },
+    { ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',       brand: '"Google Chrome";v="124", "Chromium";v="124", "Not-A.Brand";v="24"', platform: 'Windows' },
+    { ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edg/125.0.0.0 Safari/537.36',          brand: '"Microsoft Edge";v="125", "Chromium";v="125", "Not-A.Brand";v="24"', platform: 'Windows' },
 ];
 
-// Función para obtener un User-Agent aleatorio de la lista
+// Devuelve un objeto { ua, brand, platform } aleatorio
 function getRandomDesktopUserAgent() {
-    const randomIndex = Math.floor(Math.random() * desktopUserAgents.length);
-    return desktopUserAgents[randomIndex];
+    return desktopUserAgents[Math.floor(Math.random() * desktopUserAgents.length)];
 }
 
-async function getPageSource(url) { // Renombramos la función para mayor claridad o mantenemos el nombre
-    const userAgent = getRandomDesktopUserAgent();
+async function getPageSource(url) {
+    const { ua: userAgent } = getRandomDesktopUserAgent();
     console.log(`getPageSource (extract from viewer method): Using UA "${userAgent}" for URL: ${url}`);
 
     const browser = await chromium.launch({ headless: true });
@@ -155,14 +155,29 @@ async function waitForCfClear(page, label) {
 }
 
 async function getXmlSource(url) {
-    const userAgent = getRandomDesktopUserAgent();
+    const { ua: userAgent, brand, platform } = getRandomDesktopUserAgent();
     console.log(`getXmlSource: Using UA "${userAgent}" for URL: ${url}`);
 
     // Extraer la homepage para hacer el warm-up de CF ahí primero
     const parsedUrl = new URL(url);
     const homeUrl = parsedUrl.origin + '/';
 
-    const browser = await chromium.launch({ headless: true });
+    const browser = await chromium.launch({
+        headless: true,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-blink-features=AutomationControlled',
+            '--disable-infobars',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--disable-gpu',
+            '--window-size=1920,1080',
+            '--lang=en-US,en',
+        ],
+    });
     const context = await browser.newContext({
         userAgent: userAgent,
         javaScriptEnabled: true,
@@ -170,6 +185,9 @@ async function getXmlSource(url) {
         deviceScaleFactor: 1,
         isMobile: false,
         hasTouch: false,
+        locale: 'en-US',
+        timezoneId: 'America/New_York',
+        permissions: ['geolocation'],
     });
 
     // Mismo script anti-detección que getPageSource
@@ -182,9 +200,28 @@ async function getXmlSource(url) {
         Object.defineProperty(navigator, 'platform', { get: () => platformValue });
         Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
         Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+        // Ocultar que es headless
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        Object.defineProperty(navigator, 'mimeTypes', { get: () => [1, 2, 3] });
+        window.chrome = { runtime: {} };
+        Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
     }, userAgent);
 
     const page = await context.newPage();
+
+    // Simular headers realistas
+    await page.setExtraHTTPHeaders({
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'sec-ch-ua': brand,
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': `"${platform}"`,
+        'sec-ch-ua-platform-version': platform === 'Windows' ? '"15.0.0"' : '"14.0.0"',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Upgrade-Insecure-Requests': '1',
+    });
 
     try {
         // 1. Warm-up en la homepage: CF resuelve el challenge aquí y setea cf_clearance
