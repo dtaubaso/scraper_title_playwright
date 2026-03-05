@@ -140,119 +140,18 @@ async function getPageSource(url) {
 }
 
 
-async function waitForCfClear(page, label) {
-    // Poll until the title is no longer a CF challenge page (max ~45s)
-    for (let i = 0; i < 15; i++) {
-        const title = await page.title();
-        if (!title.includes('Just a moment') && !title.includes('Checking your browser')) {
-            console.log(`${label}: CF resolved after ${i * 3}s, title="${title}"`);
-            return;
-        }
-        console.log(`${label}: still on CF challenge (${i * 3}s), title="${title}"`);
-        await page.waitForTimeout(3000);
-    }
-    throw new Error(`${label}: Cloudflare challenge did not resolve within 45s`);
-}
+
 
 async function getXmlSource(url) {
-    const { ua: userAgent, brand, platform } = getRandomDesktopUserAgent();
-    console.log(`getXmlSource: Using UA "${userAgent}" for URL: ${url}`);
-
-    // Extraer la homepage para hacer el warm-up de CF ahí primero
-    const parsedUrl = new URL(url);
-    const homeUrl = parsedUrl.origin + '/';
-
-    const browser = await chromium.launch({
-        headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-blink-features=AutomationControlled',
-            '--disable-infobars',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--disable-gpu',
-            '--window-size=1920,1080',
-            '--lang=en-US,en',
-        ],
-    });
-    const context = await browser.newContext({
-        userAgent: userAgent,
-        javaScriptEnabled: true,
-        viewport: { width: 1920, height: 1080 },
-        deviceScaleFactor: 1,
-        isMobile: false,
-        hasTouch: false,
-        locale: 'en-US',
-        timezoneId: 'America/New_York',
-        permissions: ['geolocation'],
-    });
-
-    // Mismo script anti-detección que getPageSource
-    await context.addInitScript((uaString) => {
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en', 'es-ES', 'es'] });
-        let platformValue = 'Linux x86_64';
-        if (uaString.includes('Win')) platformValue = 'Win32';
-        else if (uaString.includes('Mac')) platformValue = 'MacIntel';
-        Object.defineProperty(navigator, 'platform', { get: () => platformValue });
-        Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
-        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
-        // Ocultar que es headless
-        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-        Object.defineProperty(navigator, 'mimeTypes', { get: () => [1, 2, 3] });
-        window.chrome = { runtime: {} };
-        Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
-    }, userAgent);
-
-    const page = await context.newPage();
-
-    // Simular headers realistas
-    await page.setExtraHTTPHeaders({
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'sec-ch-ua': brand,
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': `"${platform}"`,
-        'sec-ch-ua-platform-version': platform === 'Windows' ? '"15.0.0"' : '"14.0.0"',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Upgrade-Insecure-Requests': '1',
-    });
-
-    try {
-        // 1. Warm-up en la homepage: CF resuelve el challenge aquí y setea cf_clearance
-        //    para todo el dominio. Navegar directo al XML siempre dispara managed challenge.
-        console.log(`getXmlSource: warming up on homepage ${homeUrl}`);
-        await page.goto(homeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await waitForCfClear(page, 'getXmlSource[homepage]');
-
-        // Espera extra para que la red (incluyendo recursos JS de CF) se estabilice
-        await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
-        console.log(`getXmlSource: homepage loaded, cf_clearance cookie should be set`);
-
-        // 2. Navegar al XML dentro del mismo contexto (cookies ya incluyen cf_clearance)
-        console.log(`getXmlSource: navigating to XML URL ${url}`);
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await waitForCfClear(page, 'getXmlSource[xml]');
-
-        // 3. Fetch interno para obtener el XML crudo (sin render del visor de Chrome)
-        const xmlPuro = await page.evaluate(async (fetchUrl) => {
-            const response = await fetch(fetchUrl, { credentials: 'include' });
-            return await response.text();
-        }, url);
-
-        await browser.close();
-        return xmlPuro;
-
-    } catch (error) {
-        console.error(`getXmlSource: Error for URL ${url}:`, error);
-        await browser.close();
-        throw error;
+    console.log(`getXmlSource: fetching ${url}`);
+    // impit es un ESM-only package, usamos dynamic import desde CJS
+    const { Impit } = await import('impit');
+    const client = new Impit({ browser: 'chrome' });
+    const response = await client.fetch(url);
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText} for ${url}`);
     }
+    return await response.text();
 }
 
 
