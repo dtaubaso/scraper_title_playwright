@@ -142,33 +142,60 @@ async function getPageSource(url) { // Renombramos la función para mayor clarid
 
 async function getXmlSource(url) {
     const userAgent = getRandomDesktopUserAgent();
+    console.log(`getXmlSource: Using UA "${userAgent}" for URL: ${url}`);
+
     const browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({ userAgent });
+    const context = await browser.newContext({
+        userAgent: userAgent,
+        javaScriptEnabled: true,
+        viewport: { width: 1920, height: 1080 },
+        deviceScaleFactor: 1,
+        isMobile: false,
+        hasTouch: false,
+    });
+
+    // Mismo script anti-detección que getPageSource
+    await context.addInitScript((uaString) => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en', 'es-ES', 'es'] });
+        let platformValue = 'Linux x86_64';
+        if (uaString.includes('Win')) platformValue = 'Win32';
+        else if (uaString.includes('Mac')) platformValue = 'MacIntel';
+        Object.defineProperty(navigator, 'platform', { get: () => platformValue });
+        Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+    }, userAgent);
+
     const page = await context.newPage();
 
     try {
-        // 1. Navegamos para que Cloudflare nos dé la cookie de acceso
-        await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+        // 1. Navegar y esperar que la red se estabilice
+        await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
 
-        // 2. Verificamos si seguimos en la página de "Just a moment"
-        const content = await page.content();
-        if (content.includes("Just a moment") || content.includes("cloudflare")) {
-            // Esperamos un poco más para que el reto se resuelva solo
-            await page.waitForTimeout(5000);
+        // 2. Si Cloudflare presentó un reto, esperar a que lo resuelva JS
+        const title = await page.title();
+        if (title.includes('Just a moment') || title.includes('Checking your browser')) {
+            console.log('getXmlSource: Cloudflare challenge detected, waiting for resolution...');
+            await page.waitForFunction(
+                () => !document.title.includes('Just a moment') && !document.title.includes('Checking your browser'),
+                { timeout: 30000 }
+            );
+            // Esperar que la red vuelva a estabilizarse tras el reto
+            await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+            console.log('getXmlSource: Cloudflare challenge resolved.');
         }
 
-        // 3. LA CLAVE: Hacemos un fetch desde el contexto del navegador.
-        // Como el navegador ya pasó el reto, el fetch interno enviará 
-        // automáticamente las cookies de Cloudflare y traerá el XML PURO.
+        // 3. Fetch interno: el navegador ya tiene las cookies de CF, trae el XML puro
         const xmlPuro = await page.evaluate(async (fetchUrl) => {
             const response = await fetch(fetchUrl);
-            return await response.text(); // Esto es el XML tal cual, sin render de Chrome
+            return await response.text();
         }, url);
 
         await browser.close();
         return xmlPuro;
 
     } catch (error) {
+        console.error(`getXmlSource: Error for URL ${url}:`, error);
         await browser.close();
         throw error;
     }
